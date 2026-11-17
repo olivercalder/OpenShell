@@ -181,48 +181,55 @@ apps:
 
 parts:
   openshell:
-    plugin: nil
-    source: ./snap/prebuilt
+    plugin: rust
+    rust-channel: "1.95.0"
+    source: .
+    build-packages:
+      - build-essential
+      - ca-certificates
+      - clang
+      - cmake
+      - git
+      - libclang-dev
+      - libssl-dev
+      - pkg-config
+      - python3
     override-pull: |
       craftctl default
-      craftctl set version="$(cat "$CRAFT_PART_SRC/version")"
+      craftctl set version="$(python3 "$CRAFT_PROJECT_DIR/tasks/scripts/release.py" get-version --snap)"
     override-build: |
       set -euo pipefail
 
-      MISSING=()
-      for bin in openshell openshell-prover openshell-gateway openshell-sandbox openshell-gateway-wrapper; do
-        if [ ! -f "$CRAFT_PART_SRC/$bin" ]; then
-          MISSING+=("$bin")
-        fi
-      done
+      # Patch the version in Cargo.toml so built binaries respect it
+      cargo_version="$(python3 "$CRAFT_PROJECT_DIR/tasks/scripts/release.py" get-version --cargo)"
+      sed -i 's/^version = "0\.0\.0"$/version = "'"${cargo_version}"'"/' "$CRAFT_PART_BUILD/Cargo.toml"
+      grep -qx "version = \"${cargo_version}\"" "$CRAFT_PART_BUILD/Cargo.toml"
 
-      if [ ${#MISSING[@]} -gt 0 ]; then
-        printf '%s\n' \
-          "ERROR: snap/prebuilt/ is incomplete:" \
-          "${MISSING[@]/#/'  - '}" \
-          "" \
-          "The snap build directory must be populated by CI before snapcraft pack." \
-          >&2
-        exit 1
-      fi
+      # Do not build with --locked so that the patched version of workspace packages
+      # is respected. Dependency versions are still pinned via Cargo.lock.
+      cargo build --release -p openshell-cli --bin openshell
+      cargo build --release -p openshell-prover-cli --bin openshell-prover --features vendored-z3
+      cargo build --release -p openshell-gateway --bin openshell-gateway --features vendored-z3
+      cargo build --release -p openshell-sandbox --bin openshell-sandbox
 
-      install -D -m 0755 "$CRAFT_PART_SRC/openshell" \
+
+      install -D -m 0755 "$CRAFT_PART_BUILD/target/release/openshell" \
         "$CRAFT_PART_INSTALL/bin/openshell"
-      install -D -m 0755 "$CRAFT_PART_SRC/openshell-prover" \
+      install -D -m 0755 "$CRAFT_PART_BUILD/target/release/openshell-prover" \
         "$CRAFT_PART_INSTALL/bin/openshell-prover"
-      install -D -m 0755 "$CRAFT_PART_SRC/openshell-gateway" \
+      install -D -m 0755 "$CRAFT_PART_BUILD/target/release/openshell-gateway" \
         "$CRAFT_PART_INSTALL/bin/openshell-gateway"
-      install -D -m 0755 "$CRAFT_PART_SRC/openshell-sandbox" \
+      install -D -m 0755 "$CRAFT_PART_BUILD/target/release/openshell-sandbox" \
         "$CRAFT_PART_INSTALL/bin/openshell-sandbox"
-      install -D -m 0755 "$CRAFT_PART_SRC/openshell-gateway-wrapper" \
+      install -D -m 0755 "$CRAFT_PROJECT_DIR/tasks/scripts/snap-gateway-wrapper.sh" \
         "$CRAFT_PART_INSTALL/bin/openshell-gateway-wrapper"
-      install -D -m 0644 "$CRAFT_PART_SRC/meta/gui/term.desktop" \
+      install -D -m 0644 "$CRAFT_PROJECT_DIR/snap/local/term.desktop" \
         "$CRAFT_PART_INSTALL/meta/gui/term.desktop"
-      install -D -m 0644 "$CRAFT_PART_SRC/meta/gui/icon.png" \
+      install -D -m 0644 "$CRAFT_PROJECT_DIR/snap/local/icon.png" \
         "$CRAFT_PART_INSTALL/meta/gui/icon.png"
-      install -D -m 0644 "$CRAFT_PART_SRC/LICENSE" \
+      install -D -m 0644 "$CRAFT_PROJECT_DIR/LICENSE" \
         "$CRAFT_PART_INSTALL/usr/share/doc/openshell/LICENSE"
-      install -D -m 0644 "$CRAFT_PART_SRC/README.md" \
+      install -D -m 0644 "$CRAFT_PROJECT_DIR/README.md" \
         "$CRAFT_PART_INSTALL/usr/share/doc/openshell/README.md"
 
   ssh:
